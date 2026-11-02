@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% block title %}Student Dashboard - EMS Portal{% endblock %}
+
+{% block topbar_left %}
+<span class="breadcrumb"><span class="current">Student Portal</span></span>
+{% endblock %}
+
+{% block topbar_right %}
+<span style="color:var(--text-secondary); font-size:0.88rem;">{{ student.name }}</span>
+<a href="{{ url_for('roles') }}" class="btn btn-ghost btn-sm">Logout</a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:900px;">
+    <div class="welcome-card">
+        <h2>Welcome, {{ student.name }}!</h2>
+        <p>{{ student.programme.name if student.programme else 'N/A' }} | {{ student.batch.start_year }}-{{ student.batch.end_year if student.batch else 'N/A' }} | Marks: {{ student.qualifying_marks }}</p>
+    </div>
+
+    {% if allocation %}
+    <div class="card">
+        <div class="card-header"><h2>Your Allocation Result</h2></div>
+        <div class="allocation-result {{ 'waitlisted' if allocation.status.value == 'Waitlisted' else '' }}">
+            <p class="status">
+                {% if allocation.status.value == 'Allocated' %}
+                You have been allocated to:
+                {% else %}
+                You are on the waitlist for:
+                {% endif %}
+            </p>
+            <p class="course-name">{{ allocation.course.name if allocation.course else 'N/A' }}</p>
+            <p style="color:var(--text-muted); margin-bottom:14px;">{{ allocation.course.code if allocation.course else '' }}</p>
+            <span class="preference-badge">Preference #{{ allocation.preference_number }}</span>
+            <div style="margin-top:18px;">
+                <a href="{{ url_for('student_allocation_details', student_id=student.id) }}" class="btn btn-primary btn-sm">View Allocation Details</a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card">
+        <div class="card-header"><h2>Submit Course Preferences</h2></div>
+
+        {% if student.batch and student.batch.preferences_locked %}
+        <div class="alert alert-error">Preferences are locked by the admin. You cannot modify your selections at this time.</div>
+        {% endif %}
+
+        {% if preferences %}
+        <div class="alert alert-info">
+            You have already submitted preferences.{% if not (student.batch and student.batch.preferences_locked) %} You can modify them below until the deadline.{% endif %}
+        </div>
+        {% endif %}
+
+        <form action="{{ url_for('student_submit_preferences') }}" method="POST" id="preference-form">
+            <input type="hidden" name="student_id" value="{{ student.id }}">
+            <input type="hidden" name="course_ids" id="course-ids-input" value="">
+
+            <p style="color:var(--text-secondary); margin-bottom:14px; font-size:0.9rem;">Click on courses below to add them to your preferences (in order of priority):</p>
+
+            <h4 style="margin:20px 0 10px; font-size:0.95rem;">Selected Preferences:</h4>
+            <div id="selected-courses" class="preference-list">
+                {% if preferences %}
+                {% for pref in preferences %}
+                <div class="preference-item" data-course-id="{{ pref.course_id }}">
+                    <div style="display:flex; align-items:center;">
+                        <span style="margin-left:10px;">{{ pref.course.code }} - {{ pref.course.name }}</span>
+                    </div>
+                    <button type="button" class="remove-btn" onclick="removeCourse({{ pref.course_id }})">Remove</button>
+                </div>
+                {% endfor %}
+                {% else %}
+                <div class="empty-state" id="empty-preferences">
+                    <p>No courses selected yet. Click on courses below to add preferences.</p>
+                </div>
+                {% endif %}
+            </div>
+
+            <h4 style="margin:28px 0 10px; font-size:0.95rem;">Available Courses:</h4>
+            {% if available_courses %}
+            <div class="course-list" id="available-courses">
+                {% for course in available_courses %}
+                {% set rec = recommendations.get(course.id, {}) %}
+                {% set rec_label = rec.get('label', '') %}
+                {% set rec_score = rec.get('score', 0) %}
+                <div class="course-item {% if course.id in selected_course_ids %}selected{% endif %}"
+                    data-course-id="{{ course.id }}"
+                    data-course-code="{{ course.code }}"
+                    data-course-name="{{ course.name }}"
+                    data-course-desc="{{ course.description or 'No description available.' }}"
+                    data-course-teacher="{{ course.teacher.name if course.teacher else 'TBA' }}"
+                    data-course-credits="{{ course.credits }}"
+                    data-course-difficulty="{{ course.difficulty_level or 'N/A' }}"
+                    data-course-dept="{{ course.offering_department.name if course.offering_department else 'N/A' }}"
+                    data-course-tags="{{ course.tags or '' }}"
+                    data-course-capacity="{{ course.max_capacity }}"
+                    onclick="toggleCourse({{ course.id }}, '{{ course.code }}', '{{ course.name }}')">
+                    <div class="info">
+                        <h4>{{ course.code }} - {{ course.name }}
+                            {% if rec_label %}
+                            <span class="recommendation-badge {% if rec_label == 'Highly Recommended' %}highly-recommended{% elif rec_label == 'Good Fit' %}good-fit{% else %}challenging{% endif %}">
+                                {{ rec_label }}
+                                <span class="tooltip">Score: {{ rec_score }}/100</span>
+                            </span>
+                            {% endif %}
+                        </h4>
+                        <p>{{ course.offering_department.name if course.offering_department else 'N/A' }} | {{ course.max_capacity }} seats{% if course.difficulty_level %} | Difficulty: {{ course.difficulty_level }}/10{% endif %}</p>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <button type="button" class="btn-info-icon" onclick="event.stopPropagation(); showCourseDetail(this.closest('.course-item'))" title="View details">i</button>
+                        <div class="priority">+</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>No courses available for your batch yet.</p>
+            </div>
+            {% endif %}
+
+            <div class="form-actions" style="justify-content:center;">
+                <button type="submit" class="btn btn-primary" {% if student.batch and student.batch.preferences_locked %}disabled title="Preferences are locked"{% endif %}>Save Preferences</button>
+                <button type="button" class="btn btn-secondary" onclick="clearAll()" {% if student.batch and student.batch.preferences_locked %}disabled{% endif %}>Clear All</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Course Detail Modal -->
+<div id="course-modal" class="modal-overlay">
+    <div class="modal-content">
+        <button class="modal-close" onclick="closeCourseModal()">&times;</button>
+        <h3 id="modal-title" style="color:var(--accent); margin-bottom:18px;"></h3>
+        <div style="display:grid; gap:12px;">
+            <div><span style="color:var(--text-muted); font-size:0.82rem;">Description:</span><p id="modal-desc" style="margin-top:4px;"></p></div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <div><span style="color:var(--text-muted); font-size:0.82rem;">Teacher:</span><p id="modal-teacher"></p></div>
+                <div><span style="color:var(--text-muted); font-size:0.82rem;">Credits:</span><p id="modal-credits"></p></div>
+                <div><span style="color:var(--text-muted); font-size:0.82rem;">Difficulty:</span><p id="modal-difficulty"></p></div>
+                <div><span style="color:var(--text-muted); font-size:0.82rem;">Capacity:</span><p id="modal-capacity"></p></div>
+                <div><span style="color:var(--text-muted); font-size:0.82rem;">Department:</span><p id="modal-dept"></p></div>
+            </div>
+            <div><span style="color:var(--text-muted); font-size:0.82rem;">Tags:</span><p id="modal-tags"></p></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let selectedCourses = [
+        {% for pref in preferences %}
+        { id: {{ pref.course_id }}, code: '{{ pref.course.code }}', name: '{{ pref.course.name }}' },
+        {% endfor %}
+    ];
+
+    function updateHiddenInput() {
+        document.getElementById('course-ids-input').value = selectedCourses.map(c => c.id).join(',');
+    }
+
+    function renderSelectedCourses() {
+        const container = document.getElementById('selected-courses');
+        if (selectedCourses.length === 0) {
+            container.innerHTML = '<div class="empty-state" id="empty-preferences"><p>No courses selected yet. Click on courses below to add preferences.</p></div>';
+        } else {
+            container.innerHTML = selectedCourses.map((course, index) => `
+                <div class="preference-item" data-course-id="${course.id}">
+                    <div style="display:flex; align-items:center;">
+                        <span style="margin-left:10px;">${course.code} - ${course.name}</span>
+                    </div>
+                    <button type="button" class="remove-btn" onclick="removeCourse(${course.id})">Remove</button>
+                </div>
+            `).join('');
+        }
+        updateHiddenInput();
+        updateCourseStyles();
+    }
+
+    function updateCourseStyles() {
+        document.querySelectorAll('.course-item').forEach(item => {
+            const courseId = parseInt(item.dataset.courseId);
+            if (selectedCourses.some(c => c.id === courseId)) {
+                item.classList.add('selected');
+                item.querySelector('.priority').textContent = '\u2713';
+            } else {
+                item.classList.remove('selected');
+                item.querySelector('.priority').textContent = '+';
+            }
+        });
+    }
+
+    function toggleCourse(id, code, name) {
+        const index = selectedCourses.findIndex(c => c.id === id);
+        if (index > -1) {
+            selectedCourses.splice(index, 1);
+        } else {
+            selectedCourses.push({ id, code, name });
+        }
+        renderSelectedCourses();
+    }
+
+    function removeCourse(id) {
+        selectedCourses = selectedCourses.filter(c => c.id !== id);
+        renderSelectedCourses();
+    }
+
+    function clearAll() {
+        selectedCourses = [];
+        renderSelectedCourses();
+    }
+
+    function showCourseDetail(el) {
+        document.getElementById('modal-title').textContent = el.dataset.courseCode + ' - ' + el.dataset.courseName;
+        document.getElementById('modal-desc').textContent = el.dataset.courseDesc;
+        document.getElementById('modal-teacher').textContent = el.dataset.courseTeacher;
+        document.getElementById('modal-credits').textContent = el.dataset.courseCredits;
+        document.getElementById('modal-difficulty').textContent = el.dataset.courseDifficulty + '/10';
+        document.getElementById('modal-capacity').textContent = el.dataset.courseCapacity + ' seats';
+        document.getElementById('modal-dept').textContent = el.dataset.courseDept;
+        document.getElementById('modal-tags').textContent = el.dataset.courseTags || 'None';
+        document.getElementById('course-modal').classList.add('show');
+    }
+
+    function closeCourseModal() {
+        document.getElementById('course-modal').classList.remove('show');
+    }
+
+    document.getElementById('course-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeCourseModal();
+    });
+
+    {% if student.batch and student.batch.preferences_locked %}
+    document.querySelectorAll('.course-item').forEach(function(el) {
+        el.style.cursor = 'default';
+        el.onclick = function(e) {
+            if (e.target.closest('.btn-info-icon')) showCourseDetail(el);
+        };
+    });
+    document.querySelectorAll('.remove-btn').forEach(function(btn) { btn.disabled = true; });
+    {% endif %}
+
+    updateHiddenInput();
+    updateCourseStyles();
+</script>
+{% endblock %}

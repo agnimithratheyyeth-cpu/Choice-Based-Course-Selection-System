@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Role Selection - EMS Portal{% endblock %}
+
+{% block layout %}
+<div class="roles-layout">
+    <div class="roles-container">
+        <h1>EMS Portal</h1>
+        <p class="subtitle">Choice-Based Course Selection System</p>
+
+        <a class="dashboard-btn" href="{{ url_for('admin_dashboard') }}">
+            Admin Dashboard
+        </a>
+
+        <div class="divider"></div>
+
+        <p class="section-label">Registration & Master Data</p>
+
+        <div class="roles-grid">
+            <a class="role-card" href="{{ url_for('department_form') }}">
+                <span class="icon">🏫</span>
+                <h3>Department</h3>
+            </a>
+            <a class="role-card" href="{{ url_for('programme_form') }}">
+                <span class="icon">📘</span>
+                <h3>Programme</h3>
+            </a>
+            <a class="role-card" href="{{ url_for('course_form') }}">
+                <span class="icon">📚</span>
+                <h3>Course</h3>
+            </a>
+            <a class="role-card" href="{{ url_for('add_batch_form') }}">
+                <span class="icon">📅</span>
+                <h3>Batch</h3>
+            </a>
+            <a class="role-card" href="{{ url_for('student_form') }}">
+                <span class="icon">👨‍🎓</span>
+                <h3>Student</h3>
+            </a>
+            <a class="role-card" href="{{ url_for('teacher_form') }}">
+                <span class="icon">👩‍🏫</span>
+                <h3>Teacher</h3>
+            </a>
+        </div>
+
+        <p class="note">
+            After registering, students and teachers can log in at <code>/login</code>
+        </p>
+    </div>
+</div>
+{% endblock %}

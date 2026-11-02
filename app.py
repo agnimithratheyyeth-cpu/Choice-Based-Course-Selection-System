@@ -1,0 +1,1654 @@
+import os
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from datetime import datetime
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key-change-before-deployment")
+
+# Initialize database
+from database import init_db, db_session, shutdown_session
+
+# Register shutdown handler
+@app.teardown_appcontext
+def shutdown_db_session(exception=None):
+    shutdown_session(exception)
+
+
+# ============================================
+# AUTHENTICATION
+# ============================================
+
+@app.route("/", methods=["GET", "POST"])
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        from werkzeug.security import check_password_hash
+        from models import Student, Teacher
+        
+        email_or_id = request.form.get("email_or_id", "").strip()
+        password = request.form.get("password", "").strip()
+        
+        # Check admin credentials
+        if email_or_id == "admin" and password == "adminpass":
+            flash("Admin login successful!", "success")
+            return redirect(url_for("admin_dashboard"))
+        
+        # Check student by email
+        student = db_session.query(Student).filter(Student.email == email_or_id).first()
+        if student and student.user and student.user.password_hash:
+            if check_password_hash(student.user.password_hash, password):
+                flash(f"Welcome, {student.name}!", "success")
+                return redirect(url_for("student_dashboard", student_id=student.id))
+        
+        # Check student by admission number
+        if not student:
+            student = db_session.query(Student).filter(Student.admission_no == email_or_id).first()
+            if student and student.user and student.user.password_hash:
+                if check_password_hash(student.user.password_hash, password):
+                    flash(f"Welcome, {student.name}!", "success")
+                    return redirect(url_for("student_dashboard", student_id=student.id))
+        
+        # Check teacher by email
+        teacher = db_session.query(Teacher).filter(Teacher.email == email_or_id).first()
+        if teacher and teacher.user and teacher.user.password_hash:
+            if check_password_hash(teacher.user.password_hash, password):
+                flash(f"Welcome, {teacher.name}!", "success")
+                return redirect(url_for("teacher_dashboard", teacher_id=teacher.id))
+        
+        # Check teacher by faculty ID
+        if not teacher:
+            teacher = db_session.query(Teacher).filter(Teacher.faculty_id == email_or_id).first()
+            if teacher and teacher.user and teacher.user.password_hash:
+                if check_password_hash(teacher.user.password_hash, password):
+                    flash(f"Welcome, {teacher.name}!", "success")
+                    return redirect(url_for("teacher_dashboard", teacher_id=teacher.id))
+
+        # Check department by code
+        from models import Department
+        dept = db_session.query(Department).filter(Department.code == email_or_id).first()
+        if dept and dept.password_hash:
+            if check_password_hash(dept.password_hash, password):
+                flash(f"Welcome, {dept.name}!", "success")
+                return redirect(url_for("department_dashboard", department_id=dept.id))
+
+        flash("Invalid Email/ID or Password.", "error")
+
+    return render_template("login.html")
+
+
+@app.route("/roles")
+def roles():
+    return render_template("roles.html")
+
+
+@app.route("/support")
+def support():
+    return render_template("support.html")
+
+
+# ============================================
+# PAGE ROUTES
+# ============================================
+
+@app.route("/department")
+def department_form():
+    from services import DepartmentService
+    departments = DepartmentService.get_all(db_session)
+    return render_template("department.html", departments=departments)
+
+
+@app.route("/course")
+def course_form():
+    from services import TeacherService, DepartmentService
+    teachers = TeacherService.get_all(db_session)
+    departments = DepartmentService.get_all(db_session)
+    return render_template("course.html", teachers=teachers, departments=departments)
+
+
+@app.route("/student")
+def student_form():
+    from services import DepartmentService, ProgrammeService, BatchService
+    departments = DepartmentService.get_all(db_session)
+    programmes = ProgrammeService.get_all(db_session)
+    batches = BatchService.get_all(db_session)
+    return render_template("student.html", 
+                          departments=departments,
+                          programmes=programmes,
+                          batches=batches)
+
+
+@app.route("/teacher")
+def teacher_form():
+    from services import DepartmentService
+    departments = DepartmentService.get_all(db_session)
+    return render_template("teacher.html", departments=departments)
+
+
+@app.route("/programme", methods=["GET", "POST"])
+def programme_form():
+    from services import DepartmentService, ProgrammeService
+    
+    if request.method == "POST":
+        department_code = request.form.get("department")
+        programme_name = request.form.get("programme_name")
+        
+        # Find department by code
+        department = DepartmentService.get_by_code(db_session, department_code)
+        if department:
+            try:
+                ProgrammeService.create(db_session, programme_name, department.id)
+                flash(f"Programme '{programme_name}' added successfully!", "success")
+            except Exception as e:
+                flash(f"Error creating programme: {str(e)}", "error")
+        else:
+            flash("Department not found", "error")
+        
+        return redirect(url_for("programme_form"))
+    
+    departments = DepartmentService.get_all(db_session)
+    return render_template("programme.html", departments=departments)
+
+
+@app.route("/semester")
+def semester_form():
+    return render_template("semester.html")
+
+
+@app.route("/add_batch")
+def add_batch_form():
+    from services import ProgrammeService
+    programmes = ProgrammeService.get_all(db_session)
+    return render_template("add_batch.html", programmes=programmes)
+
+
+@app.route("/save_batch", methods=["POST"])
+def save_batch():
+    from services import BatchService, ProgrammeService
+    
+    programme_name = request.form.get("programme")
+    start_year = request.form.get("start_year")
+    end_year = request.form.get("end_year")
+    semester = request.form.get("semester")
+    
+    # Find programme by name (simplified - in production, use ID)
+    programmes = ProgrammeService.get_all(db_session)
+    programme = next((p for p in programmes if p.name == programme_name), None)
+    
+    if programme:
+        try:
+            # Extract semester number
+            sem_num = int(semester.replace("Semester ", "")) if semester else 1
+            BatchService.create(
+                db_session,
+                programme_id=programme.id,
+                start_year=int(start_year),
+                end_year=int(end_year),
+                current_semester=sem_num
+            )
+            flash("Batch Created Successfully!", "success")
+        except Exception as e:
+            flash(f"Error creating batch: {str(e)}", "error")
+    else:
+        flash("Programme not found", "error")
+    
+    return redirect(url_for("add_batch_form"))
+
+
+# ============================================
+# API ROUTES - DEPARTMENT
+# ============================================
+
+@app.route("/api/admin/create-dept", methods=["POST"])
+def api_create_department():
+    from services import DepartmentService
+    
+    code = request.form.get("dept_code", "").strip()
+    name = request.form.get("dept_name", "").strip()
+    head_name = request.form.get("dept_head_name", "").strip()
+    
+    if not code or not name:
+        flash("Department code and name are required", "error")
+        return redirect(url_for("department_form"))
+    
+    try:
+        DepartmentService.create(db_session, code, name, head_name)
+        flash(f"Department '{name}' created successfully!", "success")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("department_form"))
+
+
+@app.route("/api/departments", methods=["GET"])
+def api_get_departments():
+    from services import DepartmentService
+    departments = DepartmentService.get_all(db_session)
+    return jsonify([{
+        "id": d.id,
+        "code": d.code,
+        "name": d.name,
+        "head_name": d.head_name
+    } for d in departments])
+
+
+# ============================================
+# API ROUTES - PROGRAMME
+# ============================================
+
+@app.route("/api/admin/create-programme", methods=["POST"])
+def api_create_programme():
+    from services import ProgrammeService
+    
+    data = request.get_json() if request.is_json else request.form
+    name = data.get("name", "").strip()
+    department_id = data.get("department_id")
+    
+    if not name or not department_id:
+        return jsonify({"error": "Name and department_id required"}), 400
+    
+    try:
+        programme = ProgrammeService.create(db_session, name, int(department_id))
+        return jsonify({
+            "id": programme.id,
+            "name": programme.name,
+            "department_id": programme.department_id
+        }), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/programmes", methods=["GET"])
+def api_get_programmes():
+    from services import ProgrammeService
+    programmes = ProgrammeService.get_all(db_session)
+    return jsonify([{
+        "id": p.id,
+        "name": p.name,
+        "department_id": p.department_id,
+        "department_name": p.department.name if p.department else None
+    } for p in programmes])
+
+
+# ============================================
+# API ROUTES - BATCH
+# ============================================
+
+@app.route("/api/batches", methods=["GET"])
+def api_get_batches():
+    from services import BatchService
+    batches = BatchService.get_all(db_session)
+    return jsonify([{
+        "id": b.id,
+        "programme_id": b.programme_id,
+        "programme_name": b.programme.name if b.programme else None,
+        "start_year": b.start_year,
+        "end_year": b.end_year,
+        "current_semester": b.current_semester
+    } for b in batches])
+
+
+# ============================================
+# API ROUTES - COURSE
+# ============================================
+
+@app.route("/api/admin/create-course", methods=["POST"])
+def api_create_course():
+    from services import CourseService, DepartmentService, TeacherService
+    
+    code = request.form.get("course_code", "").strip()
+    name = request.form.get("course_name", "").strip()
+    course_type = request.form.get("course_type", "Minor")
+    offering_dept = request.form.get("offering_department", "")
+    max_capacity = request.form.get("max_capacity", 0)
+    teacher_id = request.form.get("assigned_teacher")
+    reserved_percent = request.form.get("reserved_seats_percent", 0)
+    
+    if not code or not name:
+        flash("Course code and name are required", "error")
+        return redirect(url_for("course_form"))
+    
+    # Find department by name
+    departments = DepartmentService.get_all(db_session)
+    department = next((d for d in departments if d.name == offering_dept), None)
+    
+    if not department:
+        flash("Invalid department", "error")
+        return redirect(url_for("course_form"))
+    
+    try:
+        CourseService.create(
+            db_session,
+            code=code,
+            name=name,
+            course_type=course_type,
+            department_id=department.id,
+            max_capacity=int(max_capacity),
+            teacher_id=int(teacher_id) if teacher_id else None,
+            reserved_seats_percent=float(reserved_percent)
+        )
+        flash(f"Course '{name}' created successfully!", "success")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("course_form"))
+
+
+@app.route("/api/courses", methods=["GET"])
+def api_get_courses():
+    from services import CourseService
+    courses = CourseService.get_all(db_session)
+    return jsonify([{
+        "id": c.id,
+        "code": c.code,
+        "name": c.name,
+        "type": c.course_type.value if c.course_type else None,
+        "department": c.offering_department.name if c.offering_department else None,
+        "teacher": c.teacher.name if c.teacher else None,
+        "max_capacity": c.max_capacity
+    } for c in courses])
+
+
+# ============================================
+# API ROUTES - STUDENT
+# ============================================
+
+@app.route("/api/register/student", methods=["POST"])
+def api_register_student():
+    from services import StudentService, DepartmentService, ProgrammeService, BatchService
+    from datetime import datetime
+    
+    admission_no = request.form.get("admission_no", "").strip()
+    exam_register_no = request.form.get("exam_register_no", "").strip()
+    roll_no = request.form.get("roll_no", "").strip()
+    name = request.form.get("name", "").strip()
+    email = request.form.get("email", "").strip()
+    password = request.form.get("password", "").strip()
+    contact_no = request.form.get("contact_no", "").strip()
+    parent_department = request.form.get("parent_department", "")
+    admission_year = request.form.get("admission_year", "")
+    qualifying_mark = request.form.get("qualifying_mark", 0)
+    reservation_category = request.form.get("reservation_category", "General")
+    dob_str = request.form.get("date_of_birth", "")
+    
+    if not all([admission_no, name, email, password]):
+        flash("Required fields missing", "error")
+        return redirect(url_for("student_form"))
+    
+    # Find department
+    departments = DepartmentService.get_all(db_session)
+    department = next((d for d in departments if d.name == parent_department), None)
+    
+    if not department:
+        flash("Invalid department", "error")
+        return redirect(url_for("student_form"))
+    
+    # Get first programme and batch for department (simplified)
+    programmes = ProgrammeService.get_by_department(db_session, department.id)
+    programme = programmes[0] if programmes else None
+    
+    if not programme:
+        flash("No programme found for department", "error")
+        return redirect(url_for("student_form"))
+    
+    batches = BatchService.get_by_programme(db_session, programme.id)
+    batch = batches[0] if batches else None
+    
+    if not batch:
+        # Create a default batch
+        batch = BatchService.create(
+            db_session,
+            programme_id=programme.id,
+            start_year=int(admission_year) if admission_year else datetime.now().year,
+            end_year=int(admission_year) + 4 if admission_year else datetime.now().year + 4
+        )
+    
+    try:
+        # Parse date
+        dob = datetime.strptime(dob_str, "%Y-%m-%d").date() if dob_str else None
+        
+        StudentService.create(
+            db_session,
+            admission_no=admission_no,
+            exam_register_no=exam_register_no,
+            roll_no=roll_no,
+            name=name,
+            email=email,
+            password=password,
+            department_id=department.id,
+            programme_id=programme.id,
+            batch_id=batch.id,
+            admission_year=int(admission_year) if admission_year else datetime.now().year,
+            qualifying_marks=float(qualifying_mark),
+            reservation_category=reservation_category,
+            contact_no=contact_no,
+            date_of_birth=dob
+        )
+        flash(f"Student '{name}' registered successfully!", "success")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("student_form"))
+
+
+@app.route("/api/students", methods=["GET"])
+def api_get_students():
+    from services import StudentService
+    students = StudentService.get_all(db_session)
+    return jsonify([{
+        "id": s.id,
+        "admission_no": s.admission_no,
+        "name": s.name,
+        "email": s.email,
+        "department": s.department.name if s.department else None,
+        "programme": s.programme.name if s.programme else None,
+        "batch": f"{s.batch.start_year}-{s.batch.end_year}" if s.batch else None,
+        "qualifying_marks": s.qualifying_marks,
+        "reservation_category": s.reservation_category.value if s.reservation_category else None
+    } for s in students])
+
+
+# ============================================
+# API ROUTES - TEACHER
+# ============================================
+
+@app.route("/api/register/teacher", methods=["POST"])
+def api_register_teacher():
+    from services import TeacherService, DepartmentService
+    
+    faculty_id = request.form.get("faculty_id", "").strip()
+    name = request.form.get("name", "").strip()
+    email = request.form.get("email", "").strip()
+    password = request.form.get("password", "").strip()
+    contact_no = request.form.get("contact_no", "").strip()
+    department_name = request.form.get("department", "")
+    designation = request.form.get("designation", "AP")
+    
+    if not all([faculty_id, name, email, password]):
+        flash("Required fields missing", "error")
+        return redirect(url_for("teacher_form"))
+    
+    # Find department
+    departments = DepartmentService.get_all(db_session)
+    department = next((d for d in departments if d.name == department_name), None)
+    
+    if not department:
+        flash("Invalid department", "error")
+        return redirect(url_for("teacher_form"))
+    
+    try:
+        TeacherService.create(
+            db_session,
+            faculty_id=faculty_id,
+            name=name,
+            email=email,
+            password=password,
+            department_id=department.id,
+            designation=designation,
+            contact_no=contact_no
+        )
+        flash(f"Teacher '{name}' registered successfully!", "success")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("teacher_form"))
+
+
+@app.route("/api/teachers", methods=["GET"])
+def api_get_teachers():
+    from services import TeacherService
+    teachers = TeacherService.get_all(db_session)
+    return jsonify([{
+        "id": t.id,
+        "faculty_id": t.faculty_id,
+        "name": t.name,
+        "email": t.email,
+        "department": t.department.name if t.department else None,
+        "designation": t.designation.value if t.designation else None
+    } for t in teachers])
+
+
+# ============================================
+# API ROUTES - PREFERENCES
+# ============================================
+
+@app.route("/api/preferences", methods=["POST"])
+def api_submit_preferences():
+    from services import PreferenceService
+    
+    data = request.get_json()
+    student_id = data.get("student_id")
+    course_ids = data.get("course_ids", [])  # List of course IDs in priority order
+    
+    if not student_id or not course_ids:
+        return jsonify({"error": "student_id and course_ids required"}), 400
+    
+    try:
+        preferences = PreferenceService.submit_preferences(
+            db_session, int(student_id), course_ids
+        )
+        return jsonify({
+            "message": "Preferences submitted successfully",
+            "count": len(preferences)
+        }), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/preferences/<int:student_id>", methods=["GET"])
+def api_get_preferences(student_id):
+    from services import PreferenceService
+    preferences = PreferenceService.get_student_preferences(db_session, student_id)
+    return jsonify([{
+        "priority": p.priority,
+        "course_id": p.course_id,
+        "course_code": p.course.code if p.course else None,
+        "course_name": p.course.name if p.course else None
+    } for p in preferences])
+
+
+# ============================================
+# API ROUTES - ALLOCATION
+# ============================================
+
+@app.route("/api/admin/run-allocation", methods=["POST"])
+def api_run_allocation():
+    from services import AllocationService
+    
+    data = request.get_json() if request.is_json else request.form
+    batch_id = data.get("batch_id")
+    allocation_round = data.get("allocation_round", 1)
+    
+    if not batch_id:
+        return jsonify({"error": "batch_id required"}), 400
+    
+    try:
+        result = AllocationService.run_allocation(
+            db_session, int(batch_id), int(allocation_round)
+        )
+        return jsonify({
+            "message": "Allocation completed",
+            "total_students": result.total_students,
+            "allocated": result.allocated_count,
+            "waitlisted": result.waitlisted_count,
+            "not_allocated": result.not_allocated_count,
+            "by_course": result.allocations_by_course,
+            "by_category": result.allocations_by_category
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/allocation/report/<int:batch_id>", methods=["GET"])
+def api_allocation_report(batch_id):
+    from services import AllocationService
+    
+    allocation_round = request.args.get("round", 1, type=int)
+    report = AllocationService.generate_allocation_report(
+        db_session, batch_id, allocation_round
+    )
+    return jsonify(report)
+
+
+@app.route("/api/allocation/student/<int:student_id>", methods=["GET"])
+def api_student_allocation(student_id):
+    from services import AllocationService
+    
+    allocation = AllocationService.get_student_allocation(db_session, student_id)
+    if allocation:
+        return jsonify({
+            "student_id": allocation.student_id,
+            "course_id": allocation.course_id,
+            "course_code": allocation.course.code if allocation.course else None,
+            "course_name": allocation.course.name if allocation.course else None,
+            "status": allocation.status.value,
+            "preference_number": allocation.preference_number
+        })
+    return jsonify({"message": "No allocation found"}), 404
+
+
+# ============================================
+# COURSE POOL MANAGEMENT
+# ============================================
+
+@app.route("/api/admin/course-pool", methods=["POST"])
+def api_add_to_course_pool():
+    from services import CourseService
+    
+    data = request.get_json()
+    course_id = data.get("course_id")
+    batch_id = data.get("batch_id")
+    
+    if not course_id or not batch_id:
+        return jsonify({"error": "course_id and batch_id required"}), 400
+    
+    try:
+        pool_entry = CourseService.add_to_pool(
+            db_session, int(course_id), int(batch_id)
+        )
+        return jsonify({
+            "message": "Course added to pool",
+            "pool_id": pool_entry.id
+        }), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/course-pool/<int:batch_id>", methods=["GET"])
+def api_get_course_pool(batch_id):
+    from services import CourseService
+    courses = CourseService.get_pool_for_batch(db_session, batch_id)
+    return jsonify([{
+        "id": c.id,
+        "code": c.code,
+        "name": c.name,
+        "type": c.course_type.value if c.course_type else None,
+        "max_capacity": c.max_capacity
+    } for c in courses])
+
+
+# ============================================
+# DASHBOARD ROUTES
+# ============================================
+
+@app.route("/admin/dashboard")
+def admin_dashboard():
+    from services import DepartmentService, ProgrammeService, StudentService, CourseService, BatchService, TeacherService
+    from models import Batch
+
+    # Get stats
+    stats = {
+        "departments": len(DepartmentService.get_all(db_session)),
+        "programmes": len(ProgrammeService.get_all(db_session)),
+        "students": len(StudentService.get_all(db_session)),
+        "courses": len(CourseService.get_all(db_session)),
+        "teachers": len(TeacherService.get_all(db_session)),
+    }
+    
+    # Get batches with eager loading
+    batches = db_session.query(Batch).all()
+    courses = CourseService.get_all(db_session)
+    students = StudentService.get_all(db_session)
+    
+    return render_template("admin_dashboard.html", 
+                          stats=stats, 
+                          batches=batches, 
+                          courses=courses,
+                          students=students)
+
+
+@app.route("/admin/run-allocation", methods=["POST"])
+def admin_run_allocation():
+    from services import AllocationService
+    
+    batch_id = request.form.get("batch_id")
+    if not batch_id:
+        flash("Batch ID required", "error")
+        return redirect(url_for("admin_dashboard"))
+    
+    try:
+        result = AllocationService.run_allocation(db_session, int(batch_id))
+        flash(f"Allocation complete! {result.allocated_count} allocated, {result.waitlisted_count} waitlisted", "success")
+    except Exception as e:
+        flash(f"Allocation error: {str(e)}", "error")
+    
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/admin/add-to-pool", methods=["POST"])
+def admin_add_to_pool():
+    from services import CourseService
+    
+    course_id = request.form.get("course_id")
+    batch_id = request.form.get("batch_id")
+    
+    if not course_id or not batch_id:
+        flash("Course and batch required", "error")
+        return redirect(url_for("admin_dashboard"))
+    
+    try:
+        CourseService.add_to_pool(db_session, int(course_id), int(batch_id))
+        flash("Course added to pool successfully!", "success")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/admin/remove-from-pool", methods=["POST"])
+def admin_remove_from_pool():
+    from models import CoursePool
+    
+    pool_id = request.form.get("pool_id")
+    if not pool_id:
+        flash("Pool ID required", "error")
+        return redirect(url_for("admin_dashboard"))
+    
+    try:
+        pool_entry = db_session.query(CoursePool).filter(CoursePool.id == int(pool_id)).first()
+        if pool_entry:
+            pool_entry.is_active = False
+            db_session.commit()
+            flash("Course removed from pool", "success")
+        else:
+            flash("Pool entry not found", "error")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/admin/delete-batch", methods=["POST"])
+def admin_delete_batch():
+    from services import BatchService
+    
+    batch_id = request.form.get("batch_id")
+    if not batch_id:
+        flash("Batch ID required", "error")
+        return redirect(url_for("admin_dashboard"))
+    
+    try:
+        success = BatchService.delete(db_session, int(batch_id))
+        if success:
+            flash("Batch deleted successfully", "success")
+        else:
+            flash("Batch not found", "error")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/admin/courses")
+def admin_courses():
+    from services import CourseService
+    courses = CourseService.get_all(db_session, active_only=True)
+    return render_template("courses_list.html", courses=courses)
+
+
+@app.route("/admin/course/<int:course_id>/seat-matrix")
+def admin_seat_matrix(course_id):
+    from services import CourseService
+    from models import SeatMatrix
+    
+    course = CourseService.get_by_id(db_session, course_id)
+    if not course:
+        flash("Course not found", "error")
+        return redirect(url_for("admin_courses"))
+    
+    seat_matrix = db_session.query(SeatMatrix).filter(SeatMatrix.course_id == course_id).first()
+    if not seat_matrix:
+        flash("Seat matrix not found for this course", "error")
+        return redirect(url_for("admin_courses"))
+    
+    return render_template("seat_matrix.html", course=course, seat_matrix=seat_matrix)
+
+
+@app.route("/admin/course/<int:course_id>/seat-matrix/update", methods=["POST"])
+def admin_update_seat_matrix(course_id):
+    from services import CourseService
+    
+    general_seats = request.form.get("general_seats", type=int)
+    ews_seats = request.form.get("ews_seats", type=int)
+    obc_seats = request.form.get("obc_seats", type=int)
+    sc_seats = request.form.get("sc_seats", type=int)
+    st_seats = request.form.get("st_seats", type=int)
+    
+    try:
+        CourseService.update_seat_matrix(
+            db_session, 
+            course_id,
+            general_seats=general_seats,
+            ews_seats=ews_seats,
+            obc_seats=obc_seats,
+            sc_seats=sc_seats,
+            st_seats=st_seats
+        )
+        flash("Seat matrix updated successfully!", "success")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("admin_seat_matrix", course_id=course_id))
+
+
+@app.route("/admin/course/<int:course_id>/edit")
+def admin_edit_course(course_id):
+    from services import CourseService, DepartmentService, TeacherService
+    
+    course = CourseService.get_by_id(db_session, course_id)
+    if not course:
+        flash("Course not found", "error")
+        return redirect(url_for("admin_courses"))
+    
+    departments = DepartmentService.get_all(db_session)
+    teachers = TeacherService.get_all(db_session)
+    
+    return render_template("edit_course.html", course=course, departments=departments, teachers=teachers)
+
+
+@app.route("/admin/course/<int:course_id>/update", methods=["POST"])
+def admin_update_course(course_id):
+    from services import CourseService
+    from models import CourseType
+    
+    course = CourseService.get_by_id(db_session, course_id)
+    if not course:
+        flash("Course not found", "error")
+        return redirect(url_for("admin_courses"))
+    
+    try:
+        course.code = request.form.get("code", "").upper()
+        course.name = request.form.get("name")
+        course.description = request.form.get("description")
+        course.max_capacity = int(request.form.get("max_capacity", 30))
+        course.credits = int(request.form.get("credits", 3))
+        course.department_id = int(request.form.get("department_id"))
+        
+        teacher_id = request.form.get("teacher_id")
+        course.teacher_id = int(teacher_id) if teacher_id else None
+        
+        course_type = request.form.get("course_type")
+        course.course_type = CourseType.MDC if course_type == "MDC" else CourseType.MINOR
+
+        course.difficulty_level = int(request.form.get("difficulty_level", 5))
+        course.tags = request.form.get("tags", "").strip() or None
+
+        db_session.commit()
+        flash("Course updated successfully!", "success")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("admin_courses"))
+
+
+@app.route("/admin/course/delete", methods=["POST"])
+def admin_delete_course():
+    from services import CourseService
+    
+    course_id = request.form.get("course_id")
+    if not course_id:
+        flash("Course ID required", "error")
+        return redirect(url_for("admin_courses"))
+    
+    try:
+        success = CourseService.delete(db_session, int(course_id))
+        if success:
+            flash("Course deleted (deactivated) successfully", "success")
+        else:
+            flash("Course not found", "error")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("admin_courses"))
+
+
+# ============================================
+# STUDENT MANAGEMENT
+# ============================================
+
+@app.route("/admin/students")
+def admin_students():
+    from services import StudentService
+    students = StudentService.get_all(db_session)
+    return render_template("students_list.html", students=students)
+
+
+@app.route("/admin/student/<int:student_id>/edit")
+def admin_edit_student(student_id):
+    from services import StudentService
+    student = StudentService.get_by_id(db_session, student_id)
+    if not student:
+        flash("Student not found", "error")
+        return redirect(url_for("admin_students"))
+    return render_template("edit_student.html", student=student)
+
+
+@app.route("/admin/student/<int:student_id>/update", methods=["POST"])
+def admin_update_student(student_id):
+    from services import StudentService
+    from werkzeug.security import generate_password_hash
+    from models import ReservationCategory
+    
+    student = StudentService.get_by_id(db_session, student_id)
+    if not student:
+        flash("Student not found", "error")
+        return redirect(url_for("admin_students"))
+    
+    try:
+        student.admission_no = request.form.get("admission_no")
+        student.roll_no = request.form.get("roll_no")
+        student.name = request.form.get("name")
+        student.email = request.form.get("email")
+        student.contact_no = request.form.get("contact_no")
+        student.qualifying_marks = float(request.form.get("qualifying_marks", 0))
+        
+        category = request.form.get("reservation_category")
+        category_map = {
+            "General": ReservationCategory.GENERAL,
+            "EWS": ReservationCategory.EWS,
+            "OBC": ReservationCategory.OBC,
+            "SC": ReservationCategory.SC,
+            "ST": ReservationCategory.ST,
+        }
+        student.reservation_category = category_map.get(category, ReservationCategory.GENERAL)
+        
+        # Update password if provided
+        password = request.form.get("password")
+        if password and student.user:
+            student.user.password_hash = generate_password_hash(password)
+        
+        db_session.commit()
+        flash("Student updated successfully!", "success")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("admin_students"))
+
+
+@app.route("/admin/student/delete", methods=["POST"])
+def admin_delete_student():
+    from services import StudentService
+    
+    student_id = request.form.get("student_id")
+    if not student_id:
+        flash("Student ID required", "error")
+        return redirect(url_for("admin_students"))
+    
+    try:
+        success = StudentService.delete(db_session, int(student_id))
+        if success:
+            flash("Student deleted successfully", "success")
+        else:
+            flash("Student not found", "error")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect(url_for("admin_students"))
+
+
+# ============================================
+# TEACHER MANAGEMENT
+# ============================================
+
+@app.route("/admin/teachers")
+def admin_teachers():
+    from services import TeacherService
+    teachers = TeacherService.get_all(db_session)
+    return render_template("teachers_list.html", teachers=teachers)
+
+
+@app.route("/admin/teacher/<int:teacher_id>/edit")
+def admin_edit_teacher(teacher_id):
+    from services import TeacherService, DepartmentService
+    teacher = TeacherService.get_by_id(db_session, teacher_id)
+    if not teacher:
+        flash("Teacher not found", "error")
+        return redirect(url_for("admin_teachers"))
+    departments = DepartmentService.get_all(db_session)
+    return render_template("edit_teacher.html", teacher=teacher, departments=departments)
+
+
+@app.route("/admin/teacher/<int:teacher_id>/update", methods=["POST"])
+def admin_update_teacher(teacher_id):
+    from services import TeacherService
+    from werkzeug.security import generate_password_hash
+    from models import Designation
+
+    teacher = TeacherService.get_by_id(db_session, teacher_id)
+    if not teacher:
+        flash("Teacher not found", "error")
+        return redirect(url_for("admin_teachers"))
+
+    try:
+        teacher.faculty_id = request.form.get("faculty_id")
+        teacher.name = request.form.get("name")
+        teacher.email = request.form.get("email")
+        teacher.contact_no = request.form.get("contact_no")
+        teacher.department_id = int(request.form.get("department_id"))
+
+        designation = request.form.get("designation")
+        designation_map = {
+            "AP": Designation.ASSISTANT_PROFESSOR,
+            "P": Designation.PROFESSOR,
+        }
+        teacher.designation = designation_map.get(designation, Designation.ASSISTANT_PROFESSOR)
+
+        # Update password if provided
+        password = request.form.get("password")
+        if password and teacher.user:
+            teacher.user.password_hash = generate_password_hash(password)
+
+        db_session.commit()
+        flash("Teacher updated successfully!", "success")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+
+    return redirect(url_for("admin_teachers"))
+
+
+@app.route("/admin/teacher/delete", methods=["POST"])
+def admin_delete_teacher():
+    from services import TeacherService
+
+    teacher_id = request.form.get("teacher_id")
+    if not teacher_id:
+        flash("Teacher ID required", "error")
+        return redirect(url_for("admin_teachers"))
+
+    try:
+        success = TeacherService.delete(db_session, int(teacher_id))
+        if success:
+            flash("Teacher deleted successfully", "success")
+        else:
+            flash("Teacher not found", "error")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+
+    return redirect(url_for("admin_teachers"))
+
+
+@app.route("/admin/allocation-report/<int:batch_id>")
+def admin_allocation_report(batch_id):
+    from services import AllocationService, BatchService
+    
+    batch = BatchService.get_by_id(db_session, batch_id)
+    if not batch:
+        flash("Batch not found", "error")
+        return redirect(url_for("admin_dashboard"))
+    
+    report = AllocationService.generate_allocation_report(db_session, batch_id)
+    
+    return render_template("allocation_report.html", batch=batch, report=report)
+
+
+@app.route("/admin/allocation-transparency/<int:batch_id>")
+def admin_allocation_transparency(batch_id):
+    from services import AllocationService, BatchService
+
+    batch = BatchService.get_by_id(db_session, batch_id)
+    if not batch:
+        flash("Batch not found", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    data = AllocationService.generate_transparency_data(db_session, batch_id)
+
+    return render_template("allocation_transparency.html", batch=batch, data=data)
+
+
+@app.route("/student/allocation-details/<int:student_id>")
+def student_allocation_details(student_id):
+    from services import AllocationService, StudentService
+
+    student = StudentService.get_by_id(db_session, student_id)
+    if not student:
+        flash("Student not found", "error")
+        return redirect(url_for("roles"))
+
+    if not student.batch or not student.batch.results_published:
+        flash("Allocation results have not been published yet.", "error")
+        return redirect(url_for("student_dashboard", student_id=student_id))
+
+    data = AllocationService.get_student_transparency_data(db_session, student_id)
+    if not data:
+        flash("No allocation data available.", "error")
+        return redirect(url_for("student_dashboard", student_id=student_id))
+
+    return render_template("student_allocation_details.html", student=student, data=data)
+
+
+@app.route("/admin/export/transparency/<int:batch_id>")
+def admin_export_transparency_csv(batch_id):
+    import csv
+    import io
+    from flask import Response
+    from models import Batch
+    from services import AllocationService
+
+    batch = db_session.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        flash("Batch not found", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    data = AllocationService.generate_transparency_data(db_session, batch_id)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Merit Rank", "Admission No", "Name", "Marks", "Category",
+        "Preferences", "Allocated Course", "Preference #", "Status"
+    ])
+    for m in data["merit_list"]:
+        prefs_str = "; ".join(
+            f"{p['priority']}. {p['course_code']}" for p in m["preferences"]
+        )
+        writer.writerow([
+            m["merit_rank"],
+            m["admission_no"],
+            m["name"],
+            m["qualifying_marks"],
+            m["reservation_category"],
+            prefs_str,
+            m["allocated_course_code"],
+            m["preference_number"] or "-",
+            m["allocation_status"],
+        ])
+
+    # Add course cutoffs section
+    writer.writerow([])
+    writer.writerow(["--- Course Cutoffs ---"])
+    writer.writerow(["Course Code", "Course Name", "Total Seats", "Filled",
+                      "General Cutoff", "EWS Cutoff", "OBC Cutoff", "SC Cutoff", "ST Cutoff"])
+    for c in data["course_cutoffs"]:
+        writer.writerow([
+            c["course_code"],
+            c["course_name"],
+            c["total_seats"],
+            c["filled_seats"],
+            c["category_cutoffs"]["General"]["cutoff_marks"],
+            c["category_cutoffs"]["EWS"]["cutoff_marks"],
+            c["category_cutoffs"]["OBC"]["cutoff_marks"],
+            c["category_cutoffs"]["SC"]["cutoff_marks"],
+            c["category_cutoffs"]["ST"]["cutoff_marks"],
+        ])
+
+    output.seek(0)
+    batch_label = f"{batch.programme.name}_{batch.start_year}" if batch.programme else f"batch_{batch_id}"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=transparency_{batch_label}.csv"},
+    )
+
+
+@app.route("/student/dashboard/<int:student_id>")
+def student_dashboard(student_id):
+    from services import StudentService, PreferenceService, CourseService, AllocationService, RecommendationService
+
+    student = StudentService.get_by_id(db_session, student_id)
+    if not student:
+        flash("Student not found", "error")
+        return redirect(url_for("roles"))
+
+    # Get preferences
+    preferences = PreferenceService.get_student_preferences(db_session, student_id)
+    selected_course_ids = [p.course_id for p in preferences]
+
+    # Get available courses for student's batch (excluding own department)
+    all_pool_courses = CourseService.get_pool_for_batch(db_session, student.batch_id)
+    available_courses = [c for c in all_pool_courses if c.department_id != student.department_id]
+
+    # Get AI recommendations for available courses
+    recommendations = {}
+    if available_courses:
+        course_ids = [c.id for c in available_courses]
+        recommendations = RecommendationService.get_recommendations_for_student(
+            db_session, student_id, course_ids
+        )
+        # Sort courses by recommendation score (highest first)
+        available_courses = sorted(
+            available_courses,
+            key=lambda c: recommendations.get(c.id, {}).get("score", 0),
+            reverse=True
+        )
+
+    # Get allocation result (only if results are published)
+    allocation = None
+    if student.batch and student.batch.results_published:
+        allocation = AllocationService.get_student_allocation(db_session, student_id)
+
+    return render_template("student_dashboard.html",
+                          student=student,
+                          preferences=preferences,
+                          selected_course_ids=selected_course_ids,
+                          available_courses=available_courses,
+                          allocation=allocation,
+                          recommendations=recommendations)
+
+
+@app.route("/student/submit-preferences", methods=["POST"])
+def student_submit_preferences():
+    from services import PreferenceService, StudentService
+
+    student_id = request.form.get("student_id")
+    course_ids_str = request.form.get("course_ids", "")
+
+    if not student_id:
+        flash("Student ID required", "error")
+        return redirect(url_for("roles"))
+
+    # Check if preferences are locked
+    student = StudentService.get_by_id(db_session, int(student_id))
+    if student and student.batch and student.batch.preferences_locked:
+        flash("Preferences are locked by the admin. You cannot modify them.", "error")
+        return redirect(url_for("student_dashboard", student_id=student_id))
+
+    # Parse course IDs
+    course_ids = [int(x) for x in course_ids_str.split(",") if x.strip()]
+
+    if not course_ids:
+        flash("Please select at least one course", "error")
+        return redirect(url_for("student_dashboard", student_id=student_id))
+
+    try:
+        PreferenceService.submit_preferences(db_session, int(student_id), course_ids)
+        flash(f"Preferences saved successfully! ({len(course_ids)} courses)", "success")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+
+    return redirect(url_for("student_dashboard", student_id=student_id))
+
+
+@app.route("/teacher/dashboard/<int:teacher_id>")
+def teacher_dashboard(teacher_id):
+    from services import TeacherService, CourseService
+    
+    teacher = TeacherService.get_by_id(db_session, teacher_id)
+    if not teacher:
+        flash("Teacher not found", "error")
+        return redirect(url_for("roles"))
+    
+    # Get courses taught by this teacher
+    courses = CourseService.get_by_teacher(db_session, teacher_id)
+    
+    return render_template("teacher_dashboard.html",
+                          teacher=teacher,
+                          courses=courses)
+
+
+# ============================================
+# PREFERENCE LOCK & RESULT PUBLISH TOGGLES
+# ============================================
+
+@app.route("/admin/toggle-preferences-lock", methods=["POST"])
+def admin_toggle_preferences_lock():
+    from models import Batch
+
+    batch_id = request.form.get("batch_id")
+    if not batch_id:
+        flash("Batch ID required", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    batch = db_session.query(Batch).filter(Batch.id == int(batch_id)).first()
+    if not batch:
+        flash("Batch not found", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    batch.preferences_locked = not batch.preferences_locked
+    db_session.commit()
+    state = "locked" if batch.preferences_locked else "unlocked"
+    flash(f"Preferences {state} for {batch.programme.name} ({batch.start_year}-{batch.end_year})", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/admin/toggle-results-published", methods=["POST"])
+def admin_toggle_results_published():
+    from models import Batch
+
+    batch_id = request.form.get("batch_id")
+    if not batch_id:
+        flash("Batch ID required", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    batch = db_session.query(Batch).filter(Batch.id == int(batch_id)).first()
+    if not batch:
+        flash("Batch not found", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    batch.results_published = not batch.results_published
+    db_session.commit()
+    state = "published" if batch.results_published else "unpublished"
+    flash(f"Results {state} for {batch.programme.name} ({batch.start_year}-{batch.end_year})", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+# ============================================
+# DEPARTMENT MODULE
+# ============================================
+
+@app.route("/admin/department/<int:department_id>/set-password", methods=["POST"])
+def admin_set_department_password(department_id):
+    from werkzeug.security import generate_password_hash
+    from models import Department
+
+    dept = db_session.query(Department).filter(Department.id == department_id).first()
+    if not dept:
+        flash("Department not found", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    password = request.form.get("password", "").strip()
+    if not password:
+        flash("Password required", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    dept.password_hash = generate_password_hash(password)
+    db_session.commit()
+    flash(f"Password set for department {dept.code}", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.route("/department/dashboard/<int:department_id>")
+def department_dashboard(department_id):
+    from models import Department, Student, Course, Allocation, AllocationStatus
+
+    dept = db_session.query(Department).filter(Department.id == department_id).first()
+    if not dept:
+        flash("Department not found", "error")
+        return redirect(url_for("login"))
+
+    students = db_session.query(Student).filter(Student.department_id == department_id).all()
+    courses = db_session.query(Course).filter(Course.department_id == department_id).all()
+
+    # Allocation stats
+    total_allocations = 0
+    allocated_count = 0
+    waitlisted_count = 0
+    for s in students:
+        for a in s.allocations:
+            total_allocations += 1
+            if a.status == AllocationStatus.ALLOCATED:
+                allocated_count += 1
+            elif a.status == AllocationStatus.WAITLISTED:
+                waitlisted_count += 1
+
+    stats = {
+        "students": len(students),
+        "courses": len(courses),
+        "allocated": allocated_count,
+        "waitlisted": waitlisted_count,
+    }
+
+    return render_template("department_dashboard.html",
+                          department=dept,
+                          students=students,
+                          courses=courses,
+                          stats=stats)
+
+
+# ============================================
+# CSV EXPORT ROUTES
+# ============================================
+
+@app.route("/admin/export/allocation/<int:batch_id>")
+def admin_export_allocation_csv(batch_id):
+    import csv
+    import io
+    from flask import Response
+    from models import Allocation, Student, Course, Batch
+
+    batch = db_session.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        flash("Batch not found", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    allocations = (
+        db_session.query(Allocation)
+        .join(Student)
+        .filter(Student.batch_id == batch_id)
+        .all()
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Admission No", "Student Name", "Email", "Course Code", "Course Name", "Status", "Preference #"])
+    for a in allocations:
+        writer.writerow([
+            a.student.admission_no,
+            a.student.name,
+            a.student.email,
+            a.course.code if a.course else "",
+            a.course.name if a.course else "",
+            a.status.value,
+            a.preference_number,
+        ])
+
+    output.seek(0)
+    batch_label = f"{batch.programme.name}_{batch.start_year}" if batch.programme else f"batch_{batch_id}"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=allocation_{batch_label}.csv"},
+    )
+
+
+@app.route("/teacher/export/course/<int:course_id>")
+def teacher_export_course_csv(course_id):
+    import csv
+    import io
+    from flask import Response
+    from models import Allocation, AllocationStatus, Course
+
+    course = db_session.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        flash("Course not found", "error")
+        return redirect(url_for("login"))
+
+    allocated = [a for a in course.allocations if a.status == AllocationStatus.ALLOCATED]
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Roll No", "Name", "Email", "Category", "Preference #"])
+    for a in allocated:
+        writer.writerow([
+            a.student.roll_no,
+            a.student.name,
+            a.student.email,
+            a.student.reservation_category.value if a.student.reservation_category else "General",
+            a.preference_number,
+        ])
+
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=course_{course.code}_students.csv"},
+    )
+
+
+@app.route("/department/export/students/<int:department_id>")
+def department_export_students_csv(department_id):
+    import csv
+    import io
+    from flask import Response
+    from models import Department, Student
+
+    dept = db_session.query(Department).filter(Department.id == department_id).first()
+    if not dept:
+        flash("Department not found", "error")
+        return redirect(url_for("login"))
+
+    students = db_session.query(Student).filter(Student.department_id == department_id).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Admission No", "Roll No", "Name", "Email", "Programme", "Batch", "Qualifying Marks", "Category"])
+    for s in students:
+        writer.writerow([
+            s.admission_no,
+            s.roll_no,
+            s.name,
+            s.email,
+            s.programme.name if s.programme else "",
+            f"{s.batch.start_year}-{s.batch.end_year}" if s.batch else "",
+            s.qualifying_marks,
+            s.reservation_category.value if s.reservation_category else "General",
+        ])
+
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=department_{dept.code}_students.csv"},
+    )
+
+
+# ============================================
+# AI RECOMMENDATION MODULE
+# ============================================
+
+@app.route("/admin/ai-status")
+def admin_ai_status():
+    from services.ai_trainer import get_model_status
+    from models import Allocation, StudentAcademicHistory
+
+    status = get_model_status()
+    status["total_allocations"] = db_session.query(Allocation).count()
+    status["students_with_academic_data"] = (
+        db_session.query(StudentAcademicHistory.student_id)
+        .distinct()
+        .count()
+    )
+    return render_template("ai_status.html", status=status)
+
+
+@app.route("/admin/train-ai-model", methods=["POST"])
+def admin_train_ai_model():
+    from services.ai_trainer import train_model
+
+    result = train_model(db_session)
+    if result.get("success"):
+        flash(
+            f"Model trained successfully on {result['samples']} samples! "
+            f"R² score: {result.get('cv_r2_score', 'N/A')}",
+            "success",
+        )
+    else:
+        flash(f"Training failed: {result.get('error', 'Unknown error')}", "error")
+
+    return redirect(url_for("admin_ai_status"))
+
+
+@app.route("/admin/student/<int:student_id>/academic", methods=["GET", "POST"])
+def admin_student_academic(student_id):
+    from services import StudentService
+    from models import StudentAcademicHistory, StudentSubjectMark, StudentInterest
+
+    student = StudentService.get_by_id(db_session, student_id)
+    if not student:
+        flash("Student not found", "error")
+        return redirect(url_for("admin_students"))
+
+    if request.method == "POST":
+        action = request.form.get("action")
+
+        if action == "add_academic":
+            semester = int(request.form.get("semester", 1))
+            cgpa = float(request.form.get("cgpa", 0))
+            sgpa = float(request.form.get("sgpa", 0))
+            total_marks = float(request.form.get("total_marks", 0))
+
+            existing = (
+                db_session.query(StudentAcademicHistory)
+                .filter_by(student_id=student_id, semester=semester)
+                .first()
+            )
+            if existing:
+                existing.cgpa = cgpa
+                existing.sgpa = sgpa
+                existing.total_marks = total_marks
+            else:
+                entry = StudentAcademicHistory(
+                    student_id=student_id,
+                    semester=semester,
+                    cgpa=cgpa,
+                    sgpa=sgpa,
+                    total_marks=total_marks,
+                )
+                db_session.add(entry)
+            db_session.commit()
+            flash(f"Academic history for semester {semester} saved!", "success")
+
+        elif action == "add_subject":
+            subject_name = request.form.get("subject_name", "").strip()
+            marks_obtained = float(request.form.get("marks_obtained", 0))
+            max_marks = float(request.form.get("max_marks", 100))
+            grade = request.form.get("grade", "").strip()
+            semester = int(request.form.get("subject_semester", 1))
+
+            mark = StudentSubjectMark(
+                student_id=student_id,
+                subject_name=subject_name,
+                marks_obtained=marks_obtained,
+                max_marks=max_marks,
+                grade=grade or None,
+                semester=semester,
+            )
+            db_session.add(mark)
+            db_session.commit()
+            flash(f"Subject mark for '{subject_name}' added!", "success")
+
+        elif action == "add_interest":
+            interest_tag = request.form.get("interest_tag", "").strip().lower()
+            if interest_tag:
+                existing = (
+                    db_session.query(StudentInterest)
+                    .filter_by(student_id=student_id, interest_tag=interest_tag)
+                    .first()
+                )
+                if not existing:
+                    interest = StudentInterest(
+                        student_id=student_id, interest_tag=interest_tag
+                    )
+                    db_session.add(interest)
+                    db_session.commit()
+                    flash(f"Interest '{interest_tag}' added!", "success")
+                else:
+                    flash("Interest already exists", "info")
+
+        elif action == "delete_interest":
+            interest_id = int(request.form.get("interest_id", 0))
+            interest = db_session.query(StudentInterest).filter_by(id=interest_id).first()
+            if interest:
+                db_session.delete(interest)
+                db_session.commit()
+                flash("Interest removed", "success")
+
+        elif action == "delete_subject":
+            mark_id = int(request.form.get("mark_id", 0))
+            mark = db_session.query(StudentSubjectMark).filter_by(id=mark_id).first()
+            if mark:
+                db_session.delete(mark)
+                db_session.commit()
+                flash("Subject mark removed", "success")
+
+        elif action == "delete_academic":
+            history_id = int(request.form.get("history_id", 0))
+            entry = db_session.query(StudentAcademicHistory).filter_by(id=history_id).first()
+            if entry:
+                db_session.delete(entry)
+                db_session.commit()
+                flash("Academic history entry removed", "success")
+
+        return redirect(url_for("admin_student_academic", student_id=student_id))
+
+    # GET: load existing data
+    academic_history = (
+        db_session.query(StudentAcademicHistory)
+        .filter_by(student_id=student_id)
+        .order_by(StudentAcademicHistory.semester)
+        .all()
+    )
+    subject_marks = (
+        db_session.query(StudentSubjectMark)
+        .filter_by(student_id=student_id)
+        .order_by(StudentSubjectMark.semester)
+        .all()
+    )
+    interests = db_session.query(StudentInterest).filter_by(student_id=student_id).all()
+
+    return render_template(
+        "student_academic.html",
+        student=student,
+        academic_history=academic_history,
+        subject_marks=subject_marks,
+        interests=interests,
+    )
+
+
+# ============================================
+# RUN APP
+# ============================================
+
+if __name__ == "__main__":
+    # Initialize database tables
+    init_db()
+    app.run(debug=True, port=5001)
+

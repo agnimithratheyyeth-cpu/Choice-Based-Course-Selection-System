@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Department Dashboard - EMS Portal{% endblock %}
+
+{% block topbar_left %}
+<span class="breadcrumb"><span class="current">Department Portal</span></span>
+{% endblock %}
+
+{% block topbar_right %}
+<a href="{{ url_for('department_export_students_csv', department_id=department.id) }}" class="btn btn-secondary btn-sm">Export CSV</a>
+<a href="{{ url_for('login') }}" class="btn btn-ghost btn-sm">Logout</a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:1100px;">
+    <div class="welcome-card" style="background:linear-gradient(135deg, #6366f1, #8b5cf6);">
+        <h2>{{ department.name }}</h2>
+        <p>Code: {{ department.code }}{% if department.head_name %} | Head: {{ department.head_name }}{% endif %}</p>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="number">{{ stats.students }}</div>
+            <div class="label">Students</div>
+        </div>
+        <div class="stat-card">
+            <div class="number">{{ stats.courses }}</div>
+            <div class="label">Courses</div>
+        </div>
+        <div class="stat-card">
+            <div class="number" style="color:var(--blue);">{{ stats.allocated }}</div>
+            <div class="label">Allocated</div>
+        </div>
+        <div class="stat-card">
+            <div class="number" style="color:var(--amber);">{{ stats.waitlisted }}</div>
+            <div class="label">Waitlisted</div>
+        </div>
+    </div>
+
+    <!-- Students -->
+    <div class="card">
+        <div class="card-header"><h2>Students</h2></div>
+        {% if students %}
+        <div class="table-container" style="border:none;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Admission No</th>
+                        <th>Name</th>
+                        <th>Programme</th>
+                        <th>Batch</th>
+                        <th>Marks</th>
+                        <th>Category</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for student in students %}
+                    <tr>
+                        <td>{{ student.admission_no }}</td>
+                        <td>{{ student.name }}</td>
+                        <td>{{ student.programme.name if student.programme else 'N/A' }}</td>
+                        <td>{{ student.batch.start_year }}-{{ student.batch.end_year if student.batch else 'N/A' }}</td>
+                        <td><span class="badge badge-success">{{ student.qualifying_marks }}</span></td>
+                        <td><span class="badge badge-info">{{ student.reservation_category.value if student.reservation_category else 'General' }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state"><p>No students in this department.</p></div>
+        {% endif %}
+    </div>
+
+    <!-- Courses -->
+    <div class="card">
+        <div class="card-header"><h2>Courses</h2></div>
+        {% if courses %}
+        <div class="table-container" style="border:none;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Code</th>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Credits</th>
+                        <th>Capacity</th>
+                        <th>Teacher</th>
+                        <th>Allocated</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for course in courses %}
+                    <tr>
+                        <td>{{ course.code }}</td>
+                        <td>{{ course.name }}</td>
+                        <td><span class="badge badge-info">{{ course.course_type.value if course.course_type else 'N/A' }}</span></td>
+                        <td>{{ course.credits }}</td>
+                        <td>{{ course.max_capacity }}</td>
+                        <td>{{ course.teacher.name if course.teacher else 'TBA' }}</td>
+                        <td><span class="badge badge-success">{{ course.allocations|selectattr('status.value', 'eq', 'Allocated')|list|length }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state"><p>No courses offered by this department.</p></div>
+        {% endif %}
+    </div>
+
+    <!-- Allocation Summary -->
+    <div class="card">
+        <div class="card-header"><h2>Allocation Summary</h2></div>
+        {% if students %}
+        <div class="table-container" style="border:none;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Student</th>
+                        <th>Allocated Course</th>
+                        <th>Status</th>
+                        <th>Preference #</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for student in students %}
+                    {% for alloc in student.allocations %}
+                    {% if alloc.status.value in ['Allocated', 'Waitlisted'] %}
+                    <tr>
+                        <td>{{ student.name }}</td>
+                        <td>{{ alloc.course.code }} - {{ alloc.course.name if alloc.course else 'N/A' }}</td>
+                        <td>
+                            {% if alloc.status.value == 'Allocated' %}
+                            <span class="badge badge-success">Allocated</span>
+                            {% else %}
+                            <span class="badge badge-warning">Waitlisted</span>
+                            {% endif %}
+                        </td>
+                        <td>#{{ alloc.preference_number }}</td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state"><p>No allocation data available.</p></div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

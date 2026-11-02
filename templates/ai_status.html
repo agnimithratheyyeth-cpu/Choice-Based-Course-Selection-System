@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}AI Module - EMS Portal{% endblock %}
+{% block body_class %}has-sidebar{% endblock %}
+
+{% block sidebar %}{% include "includes/admin_sidebar.html" %}{% endblock %}
+
+{% block topbar_left %}
+<span class="breadcrumb">
+    <a href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+    <span class="sep">/</span>
+    <span class="current">AI Module</span>
+</span>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:700px;">
+    <div class="page-header"><h1>AI Recommendation Module</h1></div>
+
+    <div class="card">
+        <div class="card-header"><h2>Model Status</h2></div>
+        <div class="status-grid">
+            <div class="status-item">
+                <div class="label">Model Trained</div>
+                <div class="value {% if status.model_trained %}green{% else %}red{% endif %}">
+                    {% if status.model_trained %}Yes{% else %}No{% endif %}
+                </div>
+            </div>
+            <div class="status-item">
+                <div class="label">Total Allocations</div>
+                <div class="value blue">{{ status.total_allocations }}</div>
+            </div>
+            <div class="status-item">
+                <div class="label">Students with Academic Data</div>
+                <div class="value blue">{{ status.students_with_academic_data }}</div>
+            </div>
+            <div class="status-item">
+                <div class="label">Model Size</div>
+                <div class="value">{% if status.model_size_kb %}{{ status.model_size_kb }} KB{% else %}-{% endif %}</div>
+            </div>
+        </div>
+
+        {% if status.model_trained %}
+        <div class="detail-row">
+            <span class="key">Last Trained</span>
+            <span class="val">{{ status.last_trained }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="key">Model Path</span>
+            <span class="val">{{ status.model_path }}</span>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h2>Train Model</h2></div>
+        <p style="color:var(--text-secondary); font-size:0.9rem; line-height:1.6; margin-bottom:18px;">
+            Train the AI model using historical allocation data. The model learns from past student-course
+            allocations to predict course suitability. You need at least 5 allocation records to train.
+            <br><br>
+            <strong>Note:</strong> Without the AI dependencies installed (<code style="background:var(--bg-card); padding:2px 6px; border-radius:4px;">uv sync --extra ai</code>),
+            the system uses rule-based heuristics. Training requires scikit-learn.
+        </p>
+        <form action="{{ url_for('admin_train_ai_model') }}" method="POST">
+            <button type="submit" class="btn btn-primary">Train AI Model</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

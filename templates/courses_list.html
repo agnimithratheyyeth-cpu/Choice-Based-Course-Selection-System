@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Manage Courses - EMS Portal{% endblock %}
+{% block body_class %}has-sidebar{% endblock %}
+
+{% block sidebar %}{% include "includes/admin_sidebar.html" %}{% endblock %}
+
+{% block topbar_left %}
+<span class="breadcrumb">
+    <a href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+    <span class="sep">/</span>
+    <span class="current">Courses</span>
+</span>
+{% endblock %}
+
+{% block topbar_right %}
+<a href="{{ url_for('course_form') }}" class="btn btn-primary btn-sm">+ Add Course</a>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>All Courses</h1>
+</div>
+
+{% if courses %}
+<div class="course-grid">
+    {% for course in courses %}
+    <div class="course-row">
+        <div class="course-info">
+            <h3>{{ course.code }} - {{ course.name }}</h3>
+            <p>{{ course.offering_department.name if course.offering_department else 'N/A' }} | {{ course.course_type.value if course.course_type else 'Minor' }} | Capacity: {{ course.max_capacity }}</p>
+            {% if course.seat_matrix %}
+            <div class="seat-badges">
+                <span class="seat-badge gen">GEN: {{ course.seat_matrix.general_seats }}</span>
+                <span class="seat-badge ews">EWS: {{ course.seat_matrix.ews_seats }}</span>
+                <span class="seat-badge obc">OBC: {{ course.seat_matrix.obc_seats }}</span>
+                <span class="seat-badge sc">SC: {{ course.seat_matrix.sc_seats }}</span>
+                <span class="seat-badge st">ST: {{ course.seat_matrix.st_seats }}</span>
+            </div>
+            {% endif %}
+        </div>
+        <div class="actions">
+            <a href="{{ url_for('admin_edit_course', course_id=course.id) }}" class="btn btn-secondary btn-sm">Edit</a>
+            <a href="{{ url_for('admin_seat_matrix', course_id=course.id) }}" class="btn btn-secondary btn-sm">Seats</a>
+            <form action="{{ url_for('admin_delete_course') }}" method="POST" style="display:inline;">
+                <input type="hidden" name="course_id" value="{{ course.id }}">
+                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Delete this course?')">Delete</button>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No courses created yet.</p>
+    <a href="{{ url_for('course_form') }}" class="btn btn-primary" style="margin-top:14px;">Create First Course</a>
+</div>
+{% endif %}
+{% endblock %}

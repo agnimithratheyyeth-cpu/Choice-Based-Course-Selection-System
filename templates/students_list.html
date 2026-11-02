@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Manage Students - EMS Portal{% endblock %}
+{% block body_class %}has-sidebar{% endblock %}
+
+{% block sidebar %}{% include "includes/admin_sidebar.html" %}{% endblock %}
+
+{% block topbar_left %}
+<span class="breadcrumb">
+    <a href="{{ url_for('admin_dashboard') }}">Dashboard</a>
+    <span class="sep">/</span>
+    <span class="current">Students</span>
+</span>
+{% endblock %}
+
+{% block topbar_right %}
+<a href="{{ url_for('student_form') }}" class="btn btn-primary btn-sm">+ Register Student</a>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>All Students ({{ students|length }})</h1>
+</div>
+
+<div class="search-box">
+    <input type="text" id="search" placeholder="Search by name, email, or admission no..." onkeyup="filterTable()">
+</div>
+
+{% if students %}
+<div class="table-container">
+    <table id="students-table">
+        <thead>
+            <tr>
+                <th>Admission No</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Programme</th>
+                <th>Marks</th>
+                <th>Category</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for student in students %}
+            <tr>
+                <td>{{ student.admission_no }}</td>
+                <td>{{ student.name }}</td>
+                <td>{{ student.email }}</td>
+                <td>{{ student.programme.name if student.programme else 'N/A' }}</td>
+                <td><span class="badge badge-success">{{ student.qualifying_marks }}</span></td>
+                <td><span class="badge badge-info">{{ student.reservation_category.value if student.reservation_category else 'General' }}</span></td>
+                <td>
+                    <div class="actions">
+                        <a href="{{ url_for('admin_edit_student', student_id=student.id) }}" class="btn btn-secondary btn-sm">Edit</a>
+                        <a href="{{ url_for('admin_student_academic', student_id=student.id) }}" class="btn btn-secondary btn-sm">Academic</a>
+                        <form action="{{ url_for('admin_delete_student') }}" method="POST" style="display:inline;">
+                            <input type="hidden" name="student_id" value="{{ student.id }}">
+                            <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Delete this student?')">Delete</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No students registered yet.</p>
+    <a href="{{ url_for('student_form') }}" class="btn btn-primary" style="margin-top:14px;">Register First Student</a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function filterTable() {
+    const query = document.getElementById('search').value.toLowerCase();
+    document.querySelectorAll('#students-table tbody tr').forEach(row => {
+        row.style.display = row.textContent.toLowerCase().includes(query) ? '' : 'none';
+    });
+}
+</script>
+{% endblock %}

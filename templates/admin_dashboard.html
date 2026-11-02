@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard - EMS Portal{% endblock %}
+{% block body_class %}has-sidebar{% endblock %}
+
+{% block sidebar %}
+{% include "includes/admin_sidebar.html" %}
+{% endblock %}
+
+{% block topbar_left %}
+<span class="breadcrumb"><span class="current">Dashboard</span></span>
+{% endblock %}
+
+{% block topbar_right %}
+<a href="{{ url_for('roles') }}" class="btn btn-ghost btn-sm">Logout</a>
+{% endblock %}
+
+{% block content %}
+<!-- Stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="number">{{ stats.departments }}</div>
+        <div class="label">Departments</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.programmes }}</div>
+        <div class="label">Programmes</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.students }}</div>
+        <div class="label">Students</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.courses }}</div>
+        <div class="label">Courses</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.teachers }}</div>
+        <div class="label">Teachers</div>
+    </div>
+</div>
+
+<!-- Batch Management -->
+<div class="card">
+    <div class="page-header" style="margin-bottom:16px;">
+        <h2>Batch Allocation Management</h2>
+        <a href="{{ url_for('add_batch_form') }}" class="btn btn-primary btn-sm">+ New Batch</a>
+    </div>
+
+    {% if batches %}
+    <div class="batch-grid">
+        {% for batch in batches %}
+        <div class="batch-card">
+            <h3>{{ batch.programme.name if batch.programme else 'Unknown' }}</h3>
+            <div class="info">
+                <span>{{ batch.start_year }} - {{ batch.end_year }} | Semester {{ batch.current_semester }}</span>
+                <span>{{ batch.students|length }} Students | {{ batch.course_pools|length }} Courses in Pool</span>
+            </div>
+
+            <div class="btn-group">
+                <form action="{{ url_for('admin_run_allocation') }}" method="POST" style="display:inline;">
+                    <input type="hidden" name="batch_id" value="{{ batch.id }}">
+                    <button type="submit" class="btn btn-primary btn-sm" onclick="return confirm('Run allocation for this batch?')">Run Allocation</button>
+                </form>
+                <a href="{{ url_for('admin_allocation_report', batch_id=batch.id) }}" class="btn btn-secondary btn-sm">Report</a>
+                <form action="{{ url_for('admin_toggle_preferences_lock') }}" method="POST" style="display:inline;">
+                    <input type="hidden" name="batch_id" value="{{ batch.id }}">
+                    <button type="submit" class="btn btn-secondary btn-sm">
+                        {% if batch.preferences_locked %}Unlock Prefs{% else %}Lock Prefs{% endif %}
+                    </button>
+                </form>
+                <form action="{{ url_for('admin_toggle_results_published') }}" method="POST" style="display:inline;">
+                    <input type="hidden" name="batch_id" value="{{ batch.id }}">
+                    <button type="submit" class="btn btn-secondary btn-sm">
+                        {% if batch.results_published %}Unpublish{% else %}Publish Results{% endif %}
+                    </button>
+                </form>
+                <form action="{{ url_for('admin_delete_batch') }}" method="POST" style="display:inline;">
+                    <input type="hidden" name="batch_id" value="{{ batch.id }}">
+                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Delete this batch and all related data?')">Delete</button>
+                </form>
+            </div>
+
+            {% if batch.course_pools %}
+            <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
+                <p style="color:var(--text-muted); font-size:0.82rem; margin-bottom:8px;">Courses in Pool:</p>
+                <div class="pool-tags">
+                    {% for pool in batch.course_pools %}
+                    {% if pool.is_active and pool.course %}
+                    <div class="pool-tag">
+                        <span>{{ pool.course.code }}</span>
+                        <form action="{{ url_for('admin_remove_from_pool') }}" method="POST" style="display:inline;">
+                            <input type="hidden" name="pool_id" value="{{ pool.id }}">
+                            <button type="submit" onclick="return confirm('Remove?')">&#10005;</button>
+                        </form>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <form class="pool-form" action="{{ url_for('admin_add_to_pool') }}" method="POST">
+                <input type="hidden" name="batch_id" value="{{ batch.id }}">
+                <select name="course_id" required>
+                    <option value="">Add course to pool...</option>
+                    {% for course in courses %}
+                    <option value="{{ course.id }}">{{ course.code }} - {{ course.name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-secondary btn-sm">+ Add</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p>No batches created yet. <a href="{{ url_for('add_batch_form') }}">Create a batch</a></p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Recent Students -->
+<div class="card">
+    <div class="card-header">
+        <h2>Recent Students</h2>
+    </div>
+    {% if students %}
+    <div class="table-container" style="border:none;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Admission No</th>
+                    <th>Name</th>
+                    <th>Programme</th>
+                    <th>Marks</th>
+                    <th>Category</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for student in students[:10] %}
+                <tr>
+                    <td>{{ student.admission_no }}</td>
+                    <td>{{ student.name }}</td>
+                    <td>{{ student.programme.name if student.programme else 'N/A' }}</td>
+                    <td><span class="badge badge-success">{{ student.qualifying_marks }}</span></td>
+                    <td><span class="badge badge-info">{{ student.reservation_category.value if student.reservation_category else 'General' }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p>No students registered yet. <a href="{{ url_for('student_form') }}">Register students</a></p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

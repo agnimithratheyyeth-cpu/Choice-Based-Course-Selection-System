@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Teacher Dashboard - EMS Portal{% endblock %}
+
+{% block topbar_left %}
+<span class="breadcrumb"><span class="current">Teacher Portal</span></span>
+{% endblock %}
+
+{% block topbar_right %}
+<span style="color:var(--text-secondary); font-size:0.88rem;">{{ teacher.name }}</span>
+<a href="{{ url_for('roles') }}" class="btn btn-ghost btn-sm">Logout</a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:1000px;">
+    <div class="welcome-card" style="background:linear-gradient(135deg, var(--amber), #d97706);">
+        <h2>Welcome, {{ teacher.name }}!</h2>
+        <p>{{ teacher.designation.value if teacher.designation else '' }} | {{ teacher.department.name if teacher.department else 'N/A' }}</p>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h2>Your Courses</h2></div>
+
+        {% if courses %}
+        {% for course in courses %}
+        <div class="teacher-course-card">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
+                <div>
+                    <h4>{{ course.code }} - {{ course.name }}</h4>
+                    <div class="meta">
+                        <span>{{ course.course_type.value if course.course_type else 'N/A' }}</span>
+                        <span>Max Capacity: {{ course.max_capacity }}</span>
+                        <span class="student-count">{{ course.allocations|selectattr('status.value', 'eq', 'Allocated')|list|length }}</span> students allocated
+                    </div>
+                </div>
+                <div class="btn-group">
+                    <a href="{{ url_for('teacher_export_course_csv', course_id=course.id) }}" class="btn btn-secondary btn-sm">Export CSV</a>
+                </div>
+            </div>
+
+            {% set allocated_students = course.allocations|selectattr('status.value', 'eq', 'Allocated')|list %}
+            {% if allocated_students %}
+            <div class="table-container" style="margin-top:14px; border:none;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Roll No</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Category</th>
+                            <th>Preference #</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for alloc in allocated_students %}
+                        <tr>
+                            <td>{{ alloc.student.roll_no }}</td>
+                            <td>{{ alloc.student.name }}</td>
+                            <td>{{ alloc.student.email }}</td>
+                            <td><span class="badge badge-info">{{ alloc.student.reservation_category.value if alloc.student.reservation_category else 'General' }}</span></td>
+                            <td><span class="badge badge-success">#{{ alloc.preference_number }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state" style="padding:20px;">
+                <p>No students allocated to this course yet.</p>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state">
+            <p>You are not assigned to any courses yet.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
